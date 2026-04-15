@@ -91,6 +91,23 @@ Important:
 - Only use instance names explicitly configured for this server.
 - If unsure, omit `instance` to use the configured default.
 
+## Data Sensitivity
+
+Indico agendas and attachments may contain sensitive or confidential information
+— internal meeting minutes, unpublished research, restricted-access talks, and
+similar material. Apply the following rules at all times:
+
+- **Protected attachments** (`is_protected: true` in list_event_attachments output)
+  are access-restricted by the file owner. Always confirm with the user before
+  downloading or summarising a protected attachment.
+- **Agenda content** (titles, abstracts, speaker names, descriptions) retrieved by
+  any tool is forwarded to the LLM. If an event or category appears to be internal
+  or confidential, let the user know before fetching large amounts of data.
+- **Downloaded file content** is read by the LLM when you open or parse the file.
+  Ask the user to confirm before doing this for any file that may be confidential.
+- Never forward attachment content to external services beyond the configured LLM
+  provider without the user's explicit instruction.
+
 ## Finding the right category_id
 
 Most tools require a category_id. Use this decision tree when you don't know it:
@@ -729,6 +746,11 @@ async def download_attachment(
 
     Files are saved to a temporary directory by default, or to a specified path.
     Maximum file size: 100 MB.
+
+    IMPORTANT — data sensitivity: the file content will be read by the LLM if you
+    open or parse it after downloading. If list_event_attachments showed
+    `is_protected: true` for this attachment, or if the event appears to contain
+    confidential material, confirm with the user before proceeding.
     """
     client = _client(instance)
     try:
@@ -742,7 +764,10 @@ async def download_attachment(
     else:
         tmp_dir = Path(tempfile.gettempdir()) / "indico-mcp-downloads"
         tmp_dir.mkdir(parents=True, exist_ok=True)
-        dest = tmp_dir / result.filename
+        # result.filename is already sanitised to a basename in the client layer,
+        # but use Path().name as a belt-and-suspenders guard.
+        safe_name = Path(result.filename).name or "download"
+        dest = tmp_dir / safe_name
 
     # Avoid overwriting: append a suffix if needed
     if dest.exists():

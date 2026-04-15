@@ -185,6 +185,51 @@ The server uses the [Indico HTTP Export API](https://docs.getindico.io/en/stable
 
 File attachments are discovered via the `folders` structure included in the export API response, which provides direct download URLs, filenames, content types, and sizes. Downloads are authenticated with the same Bearer token and saved locally (to a temp directory by default, or a specified path). Maximum file size is 100 MB.
 
+## Data Sensitivity & Privacy
+
+Indico agendas and their attachments may contain **sensitive or confidential
+information** — internal meeting minutes, unpublished research results,
+restricted-access talks, personnel matters, and similar content.
+
+### What gets sent to the LLM provider
+
+When an AI assistant calls tools such as `get_event_details`,
+`get_event_contributions`, `get_event_sessions`, or `list_event_attachments`,
+the returned data (titles, abstracts, speaker names, descriptions) is forwarded
+to the underlying language model. If you are using a cloud-hosted LLM provider
+(e.g. Anthropic Claude, OpenAI GPT), **this data leaves your local machine** and
+is processed by the provider according to their data-handling policies.
+
+Similarly, when `download_attachment` is used and the AI reads the downloaded
+file, the file content is forwarded to the LLM provider.
+
+**Before processing agenda data with an AI assistant:**
+
+- Check whether the event or category is internal or access-restricted.
+- Verify your organisation's data-handling and AI-usage policies.
+- For confidential or proprietary material, prefer a locally-hosted LLM.
+- Attachments with `is_protected: true` in `list_event_attachments` output are
+  explicitly access-restricted by the owner — require explicit user approval
+  before downloading or summarising them.
+
+### Token and access control
+
+The Indico API token grants read (and optionally write) access to the instance.
+Apply the **principle of least privilege**:
+
+- Use a **read-only** token (`Classic API` read scope) unless write access is
+  explicitly needed.
+- Do not store tokens in version-controlled files (use `.env`, which is excluded
+  by `.gitignore`).
+- Rotate tokens if they are accidentally exposed.
+
+### Room booking
+
+The `book_room` tool creates **real reservations** immediately. Always confirm
+all booking details with the user before calling `book_room` with `dry_run=False`,
+and never retry automatically on network failures — each retry may create a
+duplicate booking.
+
 ## Contributing
 
 Feature requests and bug reports are welcome. Contributions are especially encouraged from Indico users who can test new functionality against a real instance before submitting a pull request — the Indico API has enough instance-to-instance variation that untested changes are hard to review reliably.
