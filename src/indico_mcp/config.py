@@ -98,7 +98,10 @@ class Config:
         key = name or self._default
         if key not in self._instances:
             available = ", ".join(self._instances)
-            raise ValueError(f"Unknown instance '{key}'. Available: {available}")
+            raise ValueError(
+                f"Unknown instance '{key}'. Available: {available}. "
+                f"Use one of these names or omit instance to use default '{self._default}'."
+            )
         return self._instances[key]
 
     @property

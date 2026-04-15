@@ -8,16 +8,19 @@ Works with any Indico instance — configure multiple instances simultaneously a
 
 | Tool | Description |
 |------|-------------|
+| `list_instances` | List configured instance names and the current default instance |
 | `search_categories` | Find categories by name; returns ID, breadcrumb path, and event count |
 | `find_events_by_title` | Search event titles across the whole instance; each result includes `category_id` — useful for discovering which category a meeting series belongs to |
 | `browse_category` | List direct subcategories of a category by ID; works without the REST API |
 | `search_category_events` | List events in a category, filtered by date range and keyword |
 | `get_category_contributions` | All contributions from every event in a category within a date range, in a single API call |
 | `get_event_details` | Full event metadata including all contributions |
-| `get_event_contributions` | Flat list of contributions: speakers, abstract, duration, track, session |
+| `get_event_contributions` | Paginated contributions (`items` + `pagination`): speakers, abstract, duration, track, session |
 | `get_event_sessions` | Session structure with nested contributions (full agenda view) |
 | `search_events_by_keyword` | Full-text search across events |
 | `list_category_info` | Category name, description, and direct subcategories with names |
+| `list_event_attachments` | Paginated attachments (`items` + `pagination`) for an event or contribution |
+| `download_attachment` | Download an attachment file to disk given its download URL |
 | `list_room_locations` | List known room booking sites for this instance |
 | `discover_rooms` | Scan reservation history to build a local room catalogue |
 | `search_rooms` | Find rooms by name and get their numeric IDs (needed for booking) |
@@ -105,7 +108,7 @@ Re-run `discover_rooms` periodically (or whenever new rooms are added) to keep t
 
 ## Connecting to Claude
 
-Add to your Claude config (`~/.claude.json` or Claude Desktop settings):
+Run `claude add indico -- uv run --directory /path/to/indico-mcp indico-mcp` or manually add to your Claude config (`~/.claude.json` or Claude Desktop settings):
 
 ```json
 {
@@ -148,8 +151,11 @@ search_category_events(from_date="2025-04-01", to_date="2025-04-30")
 # Events in a specific category on CERN Indico
 search_category_events(category_id=72, instance="cern")
 
-# All contributions for a meeting, with speakers and abstracts
+# First page of contributions for a meeting
 get_event_contributions(event_id=1234567, instance="cern")
+
+# Continue with paging using `pagination.next_offset`
+get_event_contributions(event_id=1234567, limit=100, offset=0, instance="cern")
 
 # Full session/agenda structure of a conference
 get_event_sessions(event_id=9876543, instance="su")
@@ -159,11 +165,25 @@ search_events_by_keyword("dark matter", instance="cern")
 
 # Navigate the category hierarchy
 list_category_info(category_id=0, instance="su")
+
+# First page of attachments for an event
+list_event_attachments(event_id=1234567, instance="cern")
+
+# Continue with paging using `pagination.next_offset`
+list_event_attachments(event_id=1234567, limit=100, offset=0, instance="cern")
+
+# List attachments for a specific contribution
+list_event_attachments(event_id=1234567, contribution_id=42, instance="cern")
+
+# Download a file (URL from list_event_attachments output)
+download_attachment(download_url="https://indico.cern.ch/event/.../file.pdf")
 ```
 
 ## How it works
 
 The server uses the [Indico HTTP Export API](https://docs.getindico.io/en/stable/http-api/) (`/export/`) with `detail=contributions` and `detail=sessions` query parameters to retrieve structured agenda data. Authentication uses a standard `Authorization: Bearer <token>` header. The `/api/` endpoints in Indico are write-only (POST); all read operations go through `/export/`.
+
+File attachments are discovered via the `folders` structure included in the export API response, which provides direct download URLs, filenames, content types, and sizes. Downloads are authenticated with the same Bearer token and saved locally (to a temp directory by default, or a specified path). Maximum file size is 100 MB.
 
 ## Contributing
 

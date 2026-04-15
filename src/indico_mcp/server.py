@@ -13,6 +13,8 @@ Tools:
   get_event_sessions         — sessions with nested contributions (full agenda)
   search_events_by_keyword   — full-text search via Indico search API
   list_category_info         — metadata about a category, with subcategory names
+  list_event_attachments     — list file attachments for an event or contribution
+  download_attachment        — download an attachment file to disk
   search_rooms               — find rooms by name and get their IDs (needed for book_room)
   list_room_locations        — list known room booking sites for this instance
   discover_rooms             — scan reservation history to build a local room catalogue
@@ -30,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import tempfile
 import urllib.parse
 from contextlib import asynccontextmanager
 from datetime import date as date_, datetime as datetime_, timedelta
@@ -44,6 +47,7 @@ from .client import IndicoClient, IndicoError
 from .config import Config
 from .models import (
     extract_results,
+    normalize_attachment,
     normalize_contribution,
     normalize_event,
     normalize_event_header,
@@ -82,6 +86,11 @@ Tools for browsing Indico meeting agendas, searching events, and extracting
 contribution and session details across one or more configured Indico instances.
 Use the `instance` parameter to select between them.
 
+Important:
+- Never assume an instance name like "cern" or "su" exists.
+- Only use instance names explicitly configured for this server.
+- If unsure, omit `instance` to use the configured default.
+
 ## Finding the right category_id
 
 Most tools require a category_id. Use this decision tree when you don't know it:
@@ -104,9 +113,13 @@ Most tools require a category_id. Use this decision tree when you don't know it:
 ## Which instance to search
 
 If a meeting is part of a large international experiment (ATLAS, CMS, LHCb, etc.),
-it is almost always on the CERN instance even if the group is based elsewhere
-(Stockholm, Paris, Tokyo). Local seminars and colloquia are typically on the
-institute's own instance.
+it is almost always on the experiments instance 
+(e.g. CERN for the LHC experiment ATLAS, CMS, LHCb and IceCube for IceCube)
+even if the group is based elsewhere (Stockholm, Paris, Tokyo). 
+Local seminars and colloquia are typically on the institute's own instance.
+
+When selecting an instance, first verify the name is configured in this MCP
+deployment.
 
 ## Retrieving data efficiently
 
@@ -115,6 +128,14 @@ institute's own instance.
   finding a recurring talk slot): get_category_contributions — one API call instead
   of one call per event. Use this whenever you need to aggregate over a meeting series.
 - **Single event agenda:** get_event_details or get_event_sessions
+- For very large outputs, prefer small chunks using `limit` + `offset` where available.
+
+## Downloading files
+
+- **List attachments:** list_event_attachments — shows all files (slides, papers, minutes)
+  attached to an event or contribution, with download URLs and metadata.
+- **Download a file:** download_attachment — downloads a file given its download_url
+  (from list_event_attachments) and saves it locally.
 
 ## Room booking
 
@@ -181,8 +202,8 @@ def _instance_field() -> Any:
     return Field(
         default=None,
         description=(
-            "Named Indico instance to query (e.g. 'cern', 'su'). "
-            "Defaults to the primary configured instance."
+            "Named Indico instance to query. Use only configured names. "
+            "If omitted, the server default instance is used."
         ),
     )
 
@@ -190,6 +211,21 @@ def _instance_field() -> Any:
 # ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------
+
+
+@app.tool()
+async def list_instances() -> dict:
+    """
+    List configured Indico instances and the default instance name.
+
+    Use this first if you are unsure which `instance` values are valid.
+    """
+    if _config is None:
+        raise RuntimeError("Indico MCP server is not initialised — lifespan did not run")
+    return {
+        "default": _config.default_name,
+        "instances": _config.instance_names,
+    }
 
 
 @app.tool()
@@ -254,7 +290,7 @@ async def find_events_by_title(
         "order": "start",
     }
     try:
-        data = await client.export("categ/0", **params)
+        data = await client.export("categ/", **params)
     except IndicoError as e:
         raise ValueError(str(e)) from e
 
@@ -309,6 +345,7 @@ async def get_category_contributions(
     to_date: Annotated[str | None, Field(description="End date filter, YYYY-MM-DD.")] = None,
     limit: Annotated[int, Field(description="Maximum contributions to return (default 200, max 500).")] = 200,
     offset: Annotated[int, Field(description="Pagination offset for retrieving further results.")] = 0,
+    include_attachments: Annotated[bool, Field(description="If true, include contribution attachment metadata in each result.")] = False,
     instance: Annotated[str | None, _instance_field()] = None,
 ) -> list[dict]:
     """
@@ -343,7 +380,9 @@ async def get_category_contributions(
     for event in results:
         event_ctx = normalize_event_header(event)
         for raw_contrib in event.get("contributions", []):
-            contrib = normalize_contribution(raw_contrib)
+            contrib = normalize_contribution(
+                raw_contrib, include_attachments=include_attachments
+            )
             contrib.update(event_ctx)
             contributions.append(contrib)
 
@@ -393,6 +432,7 @@ async def search_category_events(
 @app.tool()
 async def get_event_details(
     event_id: Annotated[int, Field(description="Indico event ID.")],
+    include_attachments: Annotated[bool, Field(description="If true, include contribution attachment metadata in the event output.")] = False,
     instance: Annotated[str | None, _instance_field()] = None,
 ) -> dict:
     """
@@ -411,19 +451,29 @@ async def get_event_details(
     if not results:
         raise ValueError(f"Event {event_id} not found or not accessible.")
 
-    return normalize_event(results[0], include_contributions=True)
+    return normalize_event(
+        results[0],
+        include_contributions=True,
+        include_contribution_attachments=include_attachments,
+    )
 
 
 @app.tool()
 async def get_event_contributions(
     event_id: Annotated[int, Field(description="Indico event ID.")],
+    limit: Annotated[int, Field(description="Maximum contributions to return (default 200, max 1000). Use with offset for paging.")] = 200,
+    offset: Annotated[int, Field(description="Pagination offset for retrieving further results.")] = 0,
+    include_attachments: Annotated[bool, Field(description="If true, include attachment metadata for each contribution.")] = False,
     instance: Annotated[str | None, _instance_field()] = None,
-) -> list[dict]:
+) -> dict:
     """
-    List all contributions for an event.
+    List contributions for an event.
 
     Each contribution includes: title, speakers, authors, start time, duration,
     session, track, abstract/description, and room.
+
+    Returns both `items` and pagination metadata so partial results are explicit.
+    Use `has_more` / `next_offset` to retrieve additional pages.
     """
     client = _client(instance)
     try:
@@ -436,12 +486,33 @@ async def get_event_contributions(
         raise ValueError(f"Event {event_id} not found or not accessible.")
 
     raw_contribs = results[0].get("contributions", [])
-    return [normalize_contribution(c) for c in raw_contribs]
+    start = max(offset, 0)
+    page_limit = min(limit, 1000)
+    end = start + page_limit
+    items = [
+        normalize_contribution(c, include_attachments=include_attachments)
+        for c in raw_contribs[start:end]
+    ]
+
+    total = len(raw_contribs)
+    has_more = end < total
+    return {
+        "items": items,
+        "pagination": {
+            "total": total,
+            "returned": len(items),
+            "limit": page_limit,
+            "offset": start,
+            "has_more": has_more,
+            "next_offset": end if has_more else None,
+        },
+    }
 
 
 @app.tool()
 async def get_event_sessions(
     event_id: Annotated[int, Field(description="Indico event ID.")],
+    include_attachments: Annotated[bool, Field(description="If true, include attachment metadata for contributions inside each session.")] = False,
     instance: Annotated[str | None, _instance_field()] = None,
 ) -> list[dict]:
     """
@@ -461,7 +532,10 @@ async def get_event_sessions(
         raise ValueError(f"Event {event_id} not found or not accessible.")
 
     raw_sessions = results[0].get("sessions", [])
-    return [normalize_session(s) for s in raw_sessions]
+    return [
+        normalize_session(s, include_attachments=include_attachments)
+        for s in raw_sessions
+    ]
 
 
 @app.tool()
@@ -551,6 +625,141 @@ async def list_category_info(
             "Full category metadata not available on this instance. "
             "Use search_category_events to list events."
         ),
+    }
+
+
+@app.tool()
+async def list_event_attachments(
+    event_id: Annotated[int, Field(description="Indico event ID.")],
+    contribution_id: Annotated[int | None, Field(description="If set, only list attachments for this contribution.")] = None,
+    limit: Annotated[int, Field(description="Maximum attachments to return (default 200, max 1000). Use with offset for paging.")] = 200,
+    offset: Annotated[int, Field(description="Pagination offset for retrieving further results.")] = 0,
+    instance: Annotated[str | None, _instance_field()] = None,
+) -> dict:
+    """
+    List all file attachments and links for an event (or a specific contribution).
+
+    Returns a flat list of attachments, each with: id, title, filename, content_type,
+    size, download_url, and the folder/contribution/event context it belongs to.
+
+    Use this to discover what files (slides, papers, minutes, etc.) are attached to
+    an event or contribution before downloading them with download_attachment.
+
+    Returns both `items` and pagination metadata so partial results are explicit.
+    Use `has_more` / `next_offset` to retrieve additional pages.
+    """
+    client = _client(instance)
+    try:
+        data = await client.export(f"event/{event_id}", detail="contributions")
+    except IndicoError as e:
+        raise ValueError(str(e)) from e
+
+    results = extract_results(data)
+    if not results:
+        raise ValueError(f"Event {event_id} not found or not accessible.")
+
+    event = results[0]
+    attachments: list[dict] = []
+
+    def _collect(obj: dict, context: dict) -> None:
+        for folder in obj.get("folders", []):
+            folder_title = folder.get("title", "")
+            for att in folder.get("attachments", []):
+                entry = normalize_attachment(att)
+                entry["folder"] = folder_title
+                entry.update(context)
+                attachments.append(entry)
+
+    # Event-level attachments
+    _collect(event, {"event_id": event_id})
+
+    # Contribution-level attachments
+    for contrib in event.get("contributions", []):
+        cid = contrib.get("id")
+        if contribution_id is not None and cid != contribution_id:
+            continue
+        ctx = {"event_id": event_id, "contribution_id": cid, "contribution_title": contrib.get("title")}
+        _collect(contrib, ctx)
+
+        # Subcontribution-level attachments
+        for subcontrib in contrib.get("subContributions", []):
+            sub_ctx = {**ctx, "subcontribution_id": subcontrib.get("id"), "subcontribution_title": subcontrib.get("title")}
+            _collect(subcontrib, sub_ctx)
+
+    start = max(offset, 0)
+    page_limit = min(limit, 1000)
+    end = start + page_limit
+    items = attachments[start:end]
+    total = len(attachments)
+    has_more = end < total
+
+    note: str | None = None
+    if total == 0:
+        note = "No attachments found for this event." + (
+            f" (filtered to contribution {contribution_id})" if contribution_id else ""
+        )
+
+    return {
+        "items": items,
+        "pagination": {
+            "total": total,
+            "returned": len(items),
+            "limit": page_limit,
+            "offset": start,
+            "has_more": has_more,
+            "next_offset": end if has_more else None,
+        },
+        "note": note,
+    }
+
+
+@app.tool()
+async def download_attachment(
+    download_url: Annotated[str, Field(description="The download_url from list_event_attachments output.")],
+    save_to: Annotated[str | None, Field(
+        description="Local file path to save the file to. If not provided, saves to a temp directory."
+    )] = None,
+    instance: Annotated[str | None, _instance_field()] = None,
+) -> dict:
+    """
+    Download a file attachment from Indico and save it locally.
+
+    Use list_event_attachments first to get the download_url for the file you want.
+    Returns the local file path, filename, content type, and size.
+
+    Files are saved to a temporary directory by default, or to a specified path.
+    Maximum file size: 100 MB.
+    """
+    client = _client(instance)
+    try:
+        result = await client.download(download_url)
+    except IndicoError as e:
+        raise ValueError(str(e)) from e
+
+    if save_to:
+        dest = Path(save_to)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        tmp_dir = Path(tempfile.gettempdir()) / "indico-mcp-downloads"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        dest = tmp_dir / result.filename
+
+    # Avoid overwriting: append a suffix if needed
+    if dest.exists():
+        stem = dest.stem
+        suffix = dest.suffix
+        counter = 1
+        while dest.exists():
+            dest = dest.with_name(f"{stem}_{counter}{suffix}")
+            counter += 1
+
+    dest.write_bytes(result.content)
+
+    return {
+        "path": str(dest),
+        "filename": result.filename,
+        "content_type": result.content_type,
+        "size": result.size,
     }
 
 

@@ -9,9 +9,20 @@ Authentication: Authorization: Bearer <token>
   - Create tokens at: <indico-url>/user/tokens/
 """
 
+from dataclasses import dataclass
+
 import httpx
 
 from .config import InstanceConfig
+
+
+@dataclass
+class DownloadResult:
+    """Result of a binary file download."""
+    content: bytes
+    filename: str
+    content_type: str
+    size: int
 
 
 class IndicoError(Exception):
@@ -62,10 +73,15 @@ class IndicoClient:
         if resp.status_code == 404:
             raise IndicoError(f"Resource not found: {resource}", 404)
         if not resp.is_success or "text/html" in resp.headers.get("content-type", ""):
+            token_hint = (
+                " No token is configured for this instance, so authenticated export endpoints may return an HTML login page."
+                if "Authorization" not in self._http.headers
+                else ""
+            )
             raise IndicoError(
                 "Indico returned HTML instead of JSON. "
                 "Ensure the token has the 'Classic API' scope enabled "
-                f"(My Profile → Personal Tokens on {self._base_url}).",
+                f"(My Profile → Personal Tokens on {self._base_url}).{token_hint}",
                 resp.status_code,
             )
 
@@ -152,3 +168,62 @@ class IndicoClient:
             )
 
         return resp.json()
+
+    async def download(self, url: str, max_size: int = 100 * 1024 * 1024) -> DownloadResult:
+        """
+        Download a binary file from an Indico download URL.
+
+        The URL should be an absolute download_url from the attachment metadata,
+        or a path relative to the base URL.
+
+        Args:
+            url: Absolute or relative download URL.
+            max_size: Maximum file size in bytes (default 100 MB).
+        """
+        if not url.startswith(("http://", "https://")):
+            url = f"{self._base_url}/{url.lstrip('/')}"
+
+        try:
+            resp = await self._http.get(url)
+        except httpx.RequestError as exc:
+            raise IndicoError(f"Network error downloading file: {exc}") from exc
+
+        if resp.status_code == 401:
+            raise IndicoError("Authentication failed. Check INDICO_TOKEN.", 401)
+        if resp.status_code == 403:
+            raise IndicoError("Access denied — file may be protected.", 403)
+        if resp.status_code == 404:
+            raise IndicoError("File not found.", 404)
+        if not resp.is_success:
+            raise IndicoError(
+                f"Download failed with HTTP {resp.status_code}", resp.status_code
+            )
+
+        content = resp.content
+        if len(content) > max_size:
+            raise IndicoError(
+                f"File exceeds size limit ({len(content)} > {max_size} bytes)."
+            )
+
+        # Extract filename from Content-Disposition header or URL
+        filename = "download"
+        cd = resp.headers.get("content-disposition", "")
+        if "filename=" in cd:
+            # Parse filename from header (handles both quoted and unquoted)
+            for part in cd.split(";"):
+                part = part.strip()
+                if part.startswith("filename="):
+                    filename = part.split("=", 1)[1].strip().strip('"')
+                    break
+        else:
+            # Fall back to last path segment of URL
+            filename = url.rsplit("/", 1)[-1].split("?")[0] or filename
+
+        content_type = resp.headers.get("content-type", "application/octet-stream")
+
+        return DownloadResult(
+            content=content,
+            filename=filename,
+            content_type=content_type,
+            size=len(content),
+        )
