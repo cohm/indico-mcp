@@ -10,6 +10,8 @@ Authentication: Authorization: Bearer <token>
 """
 
 from dataclasses import dataclass
+from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 
@@ -36,6 +38,7 @@ class IndicoError(Exception):
 class IndicoClient:
     def __init__(self, instance: InstanceConfig) -> None:
         self._base_url = instance.base_url
+        self._base_host = urlparse(instance.base_url).netloc
         headers: dict[str, str] = {"Accept": "application/json"}
         if instance.token:
             headers["Authorization"] = f"Bearer {instance.token}"
@@ -183,10 +186,34 @@ class IndicoClient:
         if not url.startswith(("http://", "https://")):
             url = f"{self._base_url}/{url.lstrip('/')}"
 
+        # Validate scheme and host before making the request to prevent SSRF
+        # and avoid sending the auth token to unintended hosts.
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            raise IndicoError(
+                f"Unsafe URL scheme '{parsed.scheme}' — only http/https downloads are allowed."
+            )
+        if parsed.netloc != self._base_host:
+            raise IndicoError(
+                f"Download URL host '{parsed.netloc}' does not match the configured "
+                f"Indico instance '{self._base_host}'. Downloads are restricted to "
+                "the configured Indico host."
+            )
+
         try:
             resp = await self._http.get(url)
         except httpx.RequestError as exc:
             raise IndicoError(f"Network error downloading file: {exc}") from exc
+
+        # Belt-and-suspenders: verify no cross-host redirect occurred.
+        # httpx already strips the Authorization header on cross-host redirects
+        # (RFC behaviour), but we refuse the result anyway to avoid surprises.
+        final_host = urlparse(str(resp.url)).netloc
+        if final_host and final_host != self._base_host:
+            raise IndicoError(
+                f"Download redirected to an unexpected host '{final_host}'. "
+                "Refusing to process content from an untrusted host."
+            )
 
         if resp.status_code == 401:
             raise IndicoError("Authentication failed. Check INDICO_TOKEN.", 401)
@@ -205,7 +232,8 @@ class IndicoClient:
                 f"File exceeds size limit ({len(content)} > {max_size} bytes)."
             )
 
-        # Extract filename from Content-Disposition header or URL
+        # Extract filename from Content-Disposition header or URL.
+        # Use only the basename to prevent path-traversal via a crafted header.
         filename = "download"
         cd = resp.headers.get("content-disposition", "")
         if "filename=" in cd:
@@ -218,6 +246,10 @@ class IndicoClient:
         else:
             # Fall back to last path segment of URL
             filename = url.rsplit("/", 1)[-1].split("?")[0] or filename
+
+        # Strip any directory components supplied by the server to prevent
+        # path-traversal when the filename is later used to build a file path.
+        filename = Path(filename).name or "download"
 
         content_type = resp.headers.get("content-type", "application/octet-stream")
 
