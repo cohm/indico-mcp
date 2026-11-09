@@ -36,6 +36,7 @@ def normalize_event(
     raw: dict,
     include_contributions: bool = False,
     include_contribution_attachments: bool = False,
+    include_note: bool = False,
 ) -> dict:
     """Flatten a raw event dict from the export API."""
     event: dict = {
@@ -52,6 +53,8 @@ def normalize_event(
         "category_id": raw.get("categoryId"),
         "description": raw.get("description") or None,
     }
+    if include_note and raw.get("note"):
+        event["note"] = raw["note"]
     if include_contributions and "contributions" in raw:
         event["contributions"] = [
             normalize_contribution(
@@ -88,6 +91,7 @@ def normalize_contribution(raw: dict, include_attachments: bool = False) -> dict
         "speakers": speakers or None,
         "authors": authors or None,
         "abstract": raw.get("description") or None,
+        "note": raw.get("note") or None,
         "keywords": raw.get("keywords") or None,
         "attachments": attachments or None,
     }
@@ -110,6 +114,7 @@ def normalize_session(raw: dict, include_attachments: bool = False) -> dict:
         "location": raw.get("location"),
         "room": raw.get("roomFullname") or raw.get("room"),
         "conveners": conveners or None,
+        "note": raw.get("note") or None,
         "contributions": contributions or None,
     }
     return {k: v for k, v in session.items() if v is not None}

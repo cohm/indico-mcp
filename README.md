@@ -154,6 +154,9 @@ search_category_events(category_id=72, instance="cern")
 # First page of contributions for a meeting
 get_event_contributions(event_id=1234567, instance="cern")
 
+# Built-in event minutes appear in the note field (note.html contains HTML)
+get_event_details(event_id=1574842, instance="cern")
+
 # Continue with paging using `pagination.next_offset`
 get_event_contributions(event_id=1234567, limit=100, offset=0, instance="cern")
 
@@ -185,6 +188,8 @@ The server uses the [Indico HTTP Export API](https://docs.getindico.io/en/stable
 
 File attachments are discovered via the `folders` structure included in the export API response, which provides direct download URLs, filenames, content types, and sizes. Downloads are authenticated with the same Bearer token and saved locally (to a temp directory by default, or a specified path). Maximum file size is 100 MB.
 
+Built-in minutes are separate from file attachments. When present, the export API's `note` object is included in event details, contributions, and session blocks; its `html` field contains the formatted minutes. Use `get_event_details` for event minutes, `get_event_contributions` for contribution minutes, and `get_event_sessions` for session-block and nested contribution minutes. Category event listings omit event notes to keep results compact. Availability depends on what the instance exports and the caller can access.
+
 ## Data Sensitivity & Privacy
 
 Indico agendas and their attachments may contain **sensitive or confidential
@@ -195,7 +200,7 @@ restricted-access talks, personnel matters, and similar content.
 
 When an AI assistant calls tools such as `get_event_details`,
 `get_event_contributions`, `get_event_sessions`, or `list_event_attachments`,
-the returned data (titles, abstracts, speaker names, descriptions) is forwarded
+the returned data (including built-in minutes, titles, abstracts, speaker names, and descriptions) is forwarded
 to the underlying language model. If you are using a cloud-hosted LLM provider
 (e.g. Anthropic Claude, OpenAI GPT), **this data leaves your local machine** and
 is processed by the provider according to their data-handling policies.
