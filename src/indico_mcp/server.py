@@ -455,8 +455,8 @@ async def get_event_details(
     """
     Get full metadata for an event, including its list of contributions.
 
-    Returns event title, description, dates, location, and all contributions
-    (with speakers, duration, abstract, session assignment).
+    Returns event title, description, dates, location, built-in minutes when
+    available, and all contributions (including their minutes when available).
     """
     client = _client(instance)
     try:
@@ -472,6 +472,7 @@ async def get_event_details(
         results[0],
         include_contributions=True,
         include_contribution_attachments=include_attachments,
+        include_note=True,
     )
 
 
@@ -487,7 +488,7 @@ async def get_event_contributions(
     List contributions for an event.
 
     Each contribution includes: title, speakers, authors, start time, duration,
-    session, track, abstract/description, and room.
+    session, track, abstract/description, room, and built-in minutes when available.
 
     Returns both `items` and pagination metadata so partial results are explicit.
     Use `has_more` / `next_offset` to retrieve additional pages.
@@ -536,7 +537,8 @@ async def get_event_sessions(
     Get the session structure for an event, with each session's contributions nested inside.
 
     Useful for understanding how an event agenda is organised into parallel tracks or blocks.
-    Each session includes: title, conveners, start/end time, room, and contributions list.
+    Each session block includes title, conveners, times, room, built-in minutes
+    when available, and its contributions (including their minutes).
     """
     client = _client(instance)
     try:
