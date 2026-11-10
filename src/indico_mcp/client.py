@@ -249,7 +249,9 @@ class IndicoClient:
 
         # Strip any directory components supplied by the server to prevent
         # path-traversal when the filename is later used to build a file path.
-        filename = Path(filename).name or "download"
+        filename = Path(filename).name
+        if filename in ("", "..", "."):
+            filename = "download"
 
         content_type = resp.headers.get("content-type", "application/octet-stream")
 

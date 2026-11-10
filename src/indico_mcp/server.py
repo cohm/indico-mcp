@@ -3,6 +3,7 @@
 Indico MCP Server
 
 Tools:
+  list_instances             — list configured instances and the default
   search_categories          — find categories by name (returns ID + breadcrumb path)
   find_events_by_title       — search event titles across the whole instance; reveals category IDs
   browse_category            — list direct subcategories of a category by ID
