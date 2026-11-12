@@ -9,6 +9,7 @@ Authentication: Authorization: Bearer <token>
   - Create tokens at: <indico-url>/user/tokens/
 """
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -16,6 +17,11 @@ from urllib.parse import urlparse
 import httpx
 
 from .config import InstanceConfig
+
+
+# The export API answers a bearer token it refuses with HTTP 400 and an HTML
+# error page containing e.g. "OAuth error: invalid_token: <description>".
+_OAUTH_ERROR_RE = re.compile(r"OAuth error: ([a-z_]+)(?::\s*([^<]*))?")
 
 
 @dataclass
@@ -75,6 +81,19 @@ class IndicoClient:
             )
         if resp.status_code == 404:
             raise IndicoError(f"Resource not found: {resource}", 404)
+        if resp.status_code == 400 and (m := _OAUTH_ERROR_RE.search(resp.text)):
+            error, description = m.group(1), (m.group(2) or "").strip().rstrip(".")
+            hint = (
+                " The export API needs a token with the 'Classic API (read only)' "
+                "scope (read:legacy_api)."
+                if error == "insufficient_scope"
+                else ""
+            )
+            raise IndicoError(
+                f"Indico rejected the token: {error}"
+                f"{': ' + description if description else ''}.{hint}",
+                400,
+            )
         if not resp.is_success or "text/html" in resp.headers.get("content-type", ""):
             token_hint = (
                 " No token is configured for this instance, so authenticated export endpoints may return an HTML login page."
