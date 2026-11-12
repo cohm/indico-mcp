@@ -30,7 +30,8 @@ async def test_server_starts_and_registers_documented_tools(monkeypatch):
         registered = {t.name for t in await c.list_tools()}
         instances = await c.call_tool("list_instances", {})
     documented = set(re.findall(r"^  (\w+)\s+—", server.__doc__, re.MULTILINE))
-    assert registered == documented
+    # stdio is the default transport; HTTP-only tools stay hidden here.
+    assert registered == documented - {"get_attachment_content"}
     assert instances.data == {"default": "default", "instances": ["default"]}
 
 
@@ -74,3 +75,17 @@ async def test_get_category_contributions_explains_missing_scope(monkeypatch):
     use_fake(monkeypatch, {"count": 3, "results": [{"id": "7", "contributions": []}]})
     with pytest.raises(ValueError, match="legacy_api"):
         await server.get_category_contributions(5)
+
+
+async def test_read_only_hides_book_room(monkeypatch):
+    monkeypatch.setenv("INDICO_BASE_URL", "https://indico.example")
+    server.set_read_only(True)
+    try:
+        async with Client(server.app) as c:
+            names = {t.name for t in await c.list_tools()}
+    finally:
+        server.set_read_only(False)
+    assert "book_room" not in names
+    assert "get_event_details" in names
+    async with Client(server.app) as c:
+        assert "book_room" in {t.name for t in await c.list_tools()}

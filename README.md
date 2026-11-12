@@ -172,6 +172,19 @@ export API, plus `read:user` or `read:everything` for the token check. Tools
 that call Indico's web endpoints (`search_categories`, `list_category_info`,
 `search_events_by_keyword`) also need `read:everything`.
 
+Tools that would write to the server's own disk are swapped out in HTTP mode:
+
+- `download_attachment` is replaced by `get_attachment_content`, which returns
+  the file inside the MCP response (up to 10 MB) instead of saving it on the
+  server. Attachment downloads are Indico web endpoints, so the token needs
+  `read:everything`.
+- `discover_rooms` is not offered, and the room tools never read a rooms cache
+  file, because one catalogue would be shared by every caller. They use the
+  configured `INDICO_ROOM_LOCATIONS` and live lookups instead.
+
+`--read-only` (either transport) hides `book_room`, the only tool that changes
+anything in Indico.
+
 HTTP mode serves exactly one Indico instance, because a token is only valid at
 the instance that issued it, and it refuses to start if `INDICO_TOKEN` is set,
 so a shared token can never be served to every caller. Run one server per

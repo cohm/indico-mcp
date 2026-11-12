@@ -37,13 +37,13 @@ needs_token = pytest.mark.skipif(not E2E_TOKEN, reason="set INDICO_E2E_TOKEN for
 @pytest.fixture
 def indico_mcp_url(monkeypatch):
     monkeypatch.setenv("INDICO_BASE_URL", E2E_URL)
-    server.configure_http_auth(Config())
+    server.configure_http_mode(Config())
     port = free_port()
     try:
         with serve(server.app.http_app(stateless_http=True), port):
             yield f"http://127.0.0.1:{port}"
     finally:
-        server.reset_auth()
+        server.reset_http_mode()
 
 
 async def test_real_indico_rejects_an_unknown_token():
