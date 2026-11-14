@@ -157,6 +157,12 @@ get_event_contributions(event_id=1234567, instance="cern")
 # Built-in event minutes appear in the note field (note.html contains HTML)
 get_event_details(event_id=1574842, instance="cern")
 
+# Omit minutes from the event and all nested contributions
+get_event_details(event_id=1574842, include_notes=False, instance="cern")
+
+# Category-wide contribution listings omit minutes unless explicitly requested
+get_category_contributions(category_id=72, include_notes=True, instance="cern")
+
 # Continue with paging using `pagination.next_offset`
 get_event_contributions(event_id=1234567, limit=100, offset=0, instance="cern")
 
@@ -189,6 +195,13 @@ The server uses the [Indico HTTP Export API](https://docs.getindico.io/en/stable
 File attachments are discovered via the `folders` structure included in the export API response, which provides direct download URLs, filenames, content types, and sizes. Downloads are authenticated with the same Bearer token and saved locally (to a temp directory by default, or a specified path). Maximum file size is 100 MB.
 
 Built-in minutes are separate from file attachments. When present, the export API's `note` object is included in event details, contributions, and session blocks; its `html` field contains the formatted minutes. Use `get_event_details` for event minutes, `get_event_contributions` for contribution minutes, and `get_event_sessions` for session-block and nested contribution minutes. Category event listings omit event notes to keep results compact. Availability depends on what the instance exports and the caller can access.
+
+`include_notes` defaults to `True` on those three detailed tools; set it to
+`False` to omit notes throughout the returned structure, including nested
+contributions. `get_category_contributions` defaults to `include_notes=False`
+to keep category-wide results compact, with explicit opt-in using `True`.
+Note inclusion is independent of `include_attachments`. This controls the MCP
+output; it does not exclude notes from Indico's underlying export response.
 
 ## Data Sensitivity & Privacy
 
