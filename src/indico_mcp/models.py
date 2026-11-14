@@ -58,14 +58,18 @@ def normalize_event(
     if include_contributions and "contributions" in raw:
         event["contributions"] = [
             normalize_contribution(
-                c, include_attachments=include_contribution_attachments
+                c,
+                include_attachments=include_contribution_attachments,
+                include_note=include_note,
             )
             for c in raw["contributions"]
         ]
     return {k: v for k, v in event.items() if v is not None}
 
 
-def normalize_contribution(raw: dict, include_attachments: bool = False) -> dict:
+def normalize_contribution(
+    raw: dict, include_attachments: bool = False, include_note: bool = False
+) -> dict:
     """Flatten a contribution from the export API."""
     speakers = [_person_name(p) for p in raw.get("speakers", [])]
     authors = [_person_name(p) for p in raw.get("primaryauthors", [])]
@@ -91,18 +95,23 @@ def normalize_contribution(raw: dict, include_attachments: bool = False) -> dict
         "speakers": speakers or None,
         "authors": authors or None,
         "abstract": raw.get("description") or None,
-        "note": raw.get("note") or None,
         "keywords": raw.get("keywords") or None,
         "attachments": attachments or None,
     }
+    if include_note and raw.get("note"):
+        contrib["note"] = raw["note"]
     return {k: v for k, v in contrib.items() if v is not None}
 
 
-def normalize_session(raw: dict, include_attachments: bool = False) -> dict:
+def normalize_session(
+    raw: dict, include_attachments: bool = False, include_note: bool = False
+) -> dict:
     """Flatten a session from the export API."""
     conveners = [_person_name(p) for p in raw.get("conveners", [])]
     contributions = [
-        normalize_contribution(c, include_attachments=include_attachments)
+        normalize_contribution(
+            c, include_attachments=include_attachments, include_note=include_note
+        )
         for c in raw.get("contributions", [])
     ]
 
@@ -114,9 +123,10 @@ def normalize_session(raw: dict, include_attachments: bool = False) -> dict:
         "location": raw.get("location"),
         "room": raw.get("roomFullname") or raw.get("room"),
         "conveners": conveners or None,
-        "note": raw.get("note") or None,
         "contributions": contributions or None,
     }
+    if include_note and raw.get("note"):
+        session["note"] = raw["note"]
     return {k: v for k, v in session.items() if v is not None}
 
 
