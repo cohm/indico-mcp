@@ -9,6 +9,7 @@ Authentication: Authorization: Bearer <token>
   - Create tokens at: <indico-url>/user/tokens/
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -36,17 +37,29 @@ class IndicoError(Exception):
 
 
 class IndicoClient:
-    def __init__(self, instance: InstanceConfig) -> None:
+    def __init__(
+        self,
+        instance: InstanceConfig,
+        token_provider: Callable[[], str | None] | None = None,
+    ) -> None:
+        """
+        token_provider: called on every request to get the bearer token. When
+        omitted, the instance's configured token is used. The HTTP transport
+        passes a provider that returns the calling user's own token, so one
+        client serves many users without ever holding a shared credential.
+        """
         self._base_url = instance.base_url
         self._base_host = urlparse(instance.base_url).netloc
-        headers: dict[str, str] = {"Accept": "application/json"}
-        if instance.token:
-            headers["Authorization"] = f"Bearer {instance.token}"
+        self._token_provider = token_provider or (lambda: instance.token)
         self._http = httpx.AsyncClient(
-            headers=headers,
+            headers={"Accept": "application/json"},
             follow_redirects=True,
             timeout=30.0,
         )
+
+    def _auth_headers(self) -> dict[str, str]:
+        token = self._token_provider()
+        return {"Authorization": f"Bearer {token}"} if token else {}
 
     async def aclose(self) -> None:
         await self._http.aclose()
@@ -60,8 +73,9 @@ class IndicoClient:
         """
         clean_params = {k: v for k, v in params.items() if v is not None}
         url = f"{self._base_url}/export/{resource}.json"
+        auth_headers = self._auth_headers()
         try:
-            resp = await self._http.get(url, params=clean_params)
+            resp = await self._http.get(url, params=clean_params, headers=auth_headers)
         except httpx.RequestError as exc:
             raise IndicoError(f"Network error reaching {self._base_url}: {exc}") from exc
 
@@ -78,7 +92,7 @@ class IndicoClient:
         if not resp.is_success or "text/html" in resp.headers.get("content-type", ""):
             token_hint = (
                 " No token is configured for this instance, so authenticated export endpoints may return an HTML login page."
-                if "Authorization" not in self._http.headers
+                if not auth_headers
                 else ""
             )
             raise IndicoError(
@@ -97,7 +111,7 @@ class IndicoClient:
         clean_params = {k: v for k, v in params.items() if v is not None}
         url = f"{self._base_url}/api/{path.lstrip('/')}"
         try:
-            resp = await self._http.get(url, params=clean_params)
+            resp = await self._http.get(url, params=clean_params, headers=self._auth_headers())
         except httpx.RequestError as exc:
             raise IndicoError(f"Network error reaching {self._base_url}: {exc}") from exc
 
@@ -124,7 +138,7 @@ class IndicoClient:
         clean_data = {k: str(v) for k, v in data.items() if v is not None}
         url = f"{self._base_url}/api/{path.lstrip('/')}"
         try:
-            resp = await self._http.post(url, data=clean_data)
+            resp = await self._http.post(url, data=clean_data, headers=self._auth_headers())
         except httpx.RequestError as exc:
             raise IndicoError(f"Network error reaching {self._base_url}: {exc}") from exc
 
@@ -155,7 +169,7 @@ class IndicoClient:
         clean_params = {k: v for k, v in params.items() if v is not None}
         url = f"{self._base_url}/{path.lstrip('/')}"
         try:
-            resp = await self._http.get(url, params=clean_params)
+            resp = await self._http.get(url, params=clean_params, headers=self._auth_headers())
         except httpx.RequestError as exc:
             raise IndicoError(f"Network error reaching {self._base_url}: {exc}") from exc
 
@@ -201,7 +215,7 @@ class IndicoClient:
             )
 
         try:
-            resp = await self._http.get(url)
+            resp = await self._http.get(url, headers=self._auth_headers())
         except httpx.RequestError as exc:
             raise IndicoError(f"Network error downloading file: {exc}") from exc
 

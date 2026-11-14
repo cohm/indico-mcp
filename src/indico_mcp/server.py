@@ -26,10 +26,17 @@ Tools:
 Configuration (see .env.example):
   INDICO_BASE_URL / INDICO_TOKEN            — single instance
   INDICO_INSTANCES / INDICO_DEFAULT / ...   — multi-instance
+
+Transports (--transport):
+  stdio, the default, serves one user with tokens from the environment.
+  http serves many users: every request carries the caller's own Indico token
+  as `Authorization: Bearer`, verified against Indico before any tool runs
+  (see auth.py).
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import os
@@ -42,8 +49,12 @@ from typing import Annotated, Any
 
 from dotenv import load_dotenv
 from fastmcp import FastMCP
+from fastmcp.server.dependencies import get_access_token
 from pydantic import Field
+from starlette.requests import Request
+from starlette.responses import PlainTextResponse
 
+from .auth import IndicoTokenVerifier
 from .client import IndicoClient, IndicoError
 from .config import Config
 from .models import (
@@ -65,14 +76,24 @@ load_dotenv()
 
 _config: Config | None = None
 _clients: dict[str, IndicoClient] = {}
+# True when serving over HTTP, where each request authenticates with the
+# caller's own Indico token instead of a token from the environment.
+_bearer_auth: bool = False
+
+
+def _caller_token() -> str | None:
+    access = get_access_token()
+    return access.token if access else None
 
 
 @asynccontextmanager
 async def lifespan(server: FastMCP):  # noqa: ARG001
     global _config, _clients
     _config = Config()
+    token_provider = _caller_token if _bearer_auth else None
     _clients = {
-        name: IndicoClient(_config.get(name)) for name in _config.instance_names
+        name: IndicoClient(_config.get(name), token_provider)
+        for name in _config.instance_names
     }
     yield
     for c in _clients.values():
@@ -182,6 +203,43 @@ name configured in Indico's room booking module exactly. If you don't know the n
 """,
     lifespan=lifespan,
 )
+
+
+@app.custom_route("/healthz", methods=["GET"])
+async def healthz(request: Request) -> PlainTextResponse:  # noqa: ARG001
+    return PlainTextResponse("ok")
+
+
+def configure_http_auth(config: Config, cache_ttl_seconds: float = 60.0) -> None:
+    """
+    Require every HTTP request to carry the caller's own Indico token.
+
+    Serving exactly one instance with no token in the environment is enforced:
+    a caller's token is only valid at the instance that issued it, and an
+    environment token would be handed to every caller.
+    """
+    global _bearer_auth
+    if len(config.instance_names) != 1:
+        raise ValueError(
+            "HTTP mode serves exactly one Indico instance; "
+            f"configured: {', '.join(config.instance_names)}. "
+            "Run one server per instance."
+        )
+    instance = config.get()
+    if instance.token:
+        raise ValueError(
+            "HTTP mode authenticates each caller with their own token; "
+            "unset INDICO_TOKEN (or INDICO_<NAME>_TOKEN) so no shared token is served."
+        )
+    app.auth = IndicoTokenVerifier(instance.base_url, cache_ttl_seconds=cache_ttl_seconds)
+    _bearer_auth = True
+
+
+def reset_auth() -> None:
+    """Undo configure_http_auth (used by tests)."""
+    global _bearer_auth
+    app.auth = None
+    _bearer_auth = False
 
 
 # ---------------------------------------------------------------------------
@@ -1263,8 +1321,27 @@ async def book_room(
 # ---------------------------------------------------------------------------
 
 
-def main() -> None:
-    app.run()
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(prog="indico-mcp", description=__doc__.split("\n\n")[0])
+    parser.add_argument("--transport", choices=["stdio", "http"], default="stdio")
+    parser.add_argument("--host", default="127.0.0.1", help="HTTP bind address")
+    parser.add_argument("--port", type=int, default=8000, help="HTTP port")
+    parser.add_argument(
+        "--auth-cache-ttl", type=float, default=60.0,
+        help="Seconds to cache a successful token check (HTTP mode)",
+    )
+    args = parser.parse_args(argv)
+
+    if args.transport == "stdio":
+        app.run()
+        return
+
+    try:
+        configure_http_auth(Config(), cache_ttl_seconds=args.auth_cache_ttl)
+    except ValueError as exc:
+        parser.error(str(exc))
+    # Stateless: no per-session server state, so any replica can serve any request.
+    app.run(transport="http", host=args.host, port=args.port, stateless_http=True)
 
 
 if __name__ == "__main__":
