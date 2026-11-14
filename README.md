@@ -234,7 +234,30 @@ duplicate booking.
 
 Feature requests and bug reports are welcome. Contributions are especially encouraged from Indico users who can test new functionality against a real instance before submitting a pull request — the Indico API has enough instance-to-instance variation that untested changes are hard to review reliably.
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to set up a development environment, run the tests, and get a pull request merged.
+
 Substantial contributions will be recognised by adding the contributor as an author.
+
+## Contributors
+
+Everyone who contributes is credited here, following the [all-contributors](https://allcontributors.org) specification ([emoji key](https://allcontributors.org/docs/en/emoji-key)).
+
+<!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
+<!-- prettier-ignore-start -->
+<!-- markdownlint-disable -->
+<table>
+  <tbody>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/cohm"><img src="https://avatars.githubusercontent.com/u/7143813?v=4?s=80" width="80px;" alt="Christian Ohm"/><br /><sub><b>Christian Ohm</b></sub></a><br /><a href="https://github.com/cohm/indico-mcp/commits?author=cohm" title="Code">💻</a> <a href="https://github.com/cohm/indico-mcp/commits?author=cohm" title="Documentation">📖</a> <a href="#maintenance-cohm" title="Maintenance">🚧</a> <a href="https://github.com/cohm/indico-mcp/pulls?q=is%3Apr+reviewed-by%3Acohm" title="Reviewed Pull Requests">👀</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/The-Ludwig"><img src="https://avatars.githubusercontent.com/u/31670556?v=4?s=80" width="80px;" alt="Ludwig Neste"/><br /><sub><b>Ludwig Neste</b></sub></a><br /><a href="https://github.com/cohm/indico-mcp/commits?author=The-Ludwig" title="Code">💻</a> <a href="https://github.com/cohm/indico-mcp/commits?author=The-Ludwig" title="Documentation">📖</a></td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- markdownlint-restore -->
+<!-- prettier-ignore-end -->
+
+<!-- ALL-CONTRIBUTORS-LIST:END -->
 
 ## License
 

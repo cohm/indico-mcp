@@ -1,0 +1,38 @@
+{
+  "projectName": "indico-mcp",
+  "projectOwner": "cohm",
+  "repoType": "github",
+  "repoHost": "https://github.com",
+  "files": [
+    "README.md"
+  ],
+  "imageSize": 80,
+  "commit": false,
+  "commitConvention": "none",
+  "contributorsPerLine": 7,
+  "linkToUsage": false,
+  "contributors": [
+    {
+      "login": "cohm",
+      "name": "Christian Ohm",
+      "avatar_url": "https://avatars.githubusercontent.com/u/7143813?v=4",
+      "profile": "https://github.com/cohm",
+      "contributions": [
+        "code",
+        "doc",
+        "maintenance",
+        "review"
+      ]
+    },
+    {
+      "login": "The-Ludwig",
+      "name": "Ludwig Neste",
+      "avatar_url": "https://avatars.githubusercontent.com/u/31670556?v=4",
+      "profile": "https://github.com/The-Ludwig",
+      "contributions": [
+        "code",
+        "doc"
+      ]
+    }
+  ]
+}
