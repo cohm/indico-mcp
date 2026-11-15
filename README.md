@@ -194,7 +194,13 @@ The server uses the [Indico HTTP Export API](https://docs.getindico.io/en/stable
 
 File attachments are discovered via the `folders` structure included in the export API response, which provides direct download URLs, filenames, content types, and sizes. Downloads are authenticated with the same Bearer token and saved locally (to a temp directory by default, or a specified path). Maximum file size is 100 MB.
 
-Built-in minutes are separate from file attachments. When present, the export API's `note` object is included in event details, contributions, and session blocks; its `html` field contains the formatted minutes. Use `get_event_details` for event minutes, `get_event_contributions` for contribution minutes, and `get_event_sessions` for session-block and nested contribution minutes. Category event listings omit event notes to keep results compact. Availability depends on what the instance exports and the caller can access.
+Built-in minutes are separate from file attachments. When present, a normalized `note` object is included in event details, contributions, and session blocks; its `html` field contains the formatted minutes. Use `get_event_details` for event minutes, `get_event_contributions` for contribution minutes, and `get_event_sessions` for session-block and nested contribution minutes. Category event listings omit event notes to keep results compact. Availability depends on what the instance exports and the caller can access.
+
+Notes contain `html` (unchanged export HTML), `url`, and `modified` (the export's
+`modified_dt` timestamp), when available. The export's numeric `user` ID and
+other fields are omitted. Missing or null fields and empty note objects are
+omitted. HTML is passed through without sanitization or conversion; consumers
+that render it should apply their own HTML sanitization.
 
 `include_notes` defaults to `True` on those three detailed tools; set it to
 `False` to omit notes throughout the returned structure, including nested

@@ -32,6 +32,16 @@ def _person_name(p: dict) -> str:
     return name or p.get("name", "")
 
 
+def normalize_note(raw: dict) -> dict:
+    """Keep note content and metadata, preserving the exported HTML unchanged."""
+    note = {
+        "html": raw.get("html"),
+        "url": raw.get("url"),
+        "modified": raw.get("modified_dt"),
+    }
+    return {k: v for k, v in note.items() if v is not None}
+
+
 def normalize_event(
     raw: dict,
     include_contributions: bool = False,
@@ -54,7 +64,7 @@ def normalize_event(
         "description": raw.get("description") or None,
     }
     if include_note and raw.get("note"):
-        event["note"] = raw["note"]
+        event["note"] = normalize_note(raw["note"]) or None
     if include_contributions and "contributions" in raw:
         event["contributions"] = [
             normalize_contribution(
@@ -99,7 +109,7 @@ def normalize_contribution(
         "attachments": attachments or None,
     }
     if include_note and raw.get("note"):
-        contrib["note"] = raw["note"]
+        contrib["note"] = normalize_note(raw["note"]) or None
     return {k: v for k, v in contrib.items() if v is not None}
 
 
@@ -126,7 +136,7 @@ def normalize_session(
         "contributions": contributions or None,
     }
     if include_note and raw.get("note"):
-        session["note"] = raw["note"]
+        session["note"] = normalize_note(raw["note"]) or None
     return {k: v for k, v in session.items() if v is not None}
 
 

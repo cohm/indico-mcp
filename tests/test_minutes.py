@@ -1,7 +1,7 @@
 import pytest
 
 from indico_mcp import server
-from indico_mcp.models import normalize_contribution, normalize_event, normalize_session
+from indico_mcp.models import normalize_contribution, normalize_event, normalize_note, normalize_session
 
 
 EVENT_NOTE = {
@@ -10,12 +10,17 @@ EVENT_NOTE = {
     "modified_dt": "2026-11-01T12:00:00+00:00",
     "user": 7,
 }
+NORMALIZED_EVENT_NOTE = {
+    "html": "<p>Event minutes &amp; decisions</p>",
+    "url": "https://indico.example/event/1/note/",
+    "modified": "2026-11-01T12:00:00+00:00",
+}
 CONTRIBUTION_NOTE = {"html": "<p>Contribution minutes</p>"}
 BLOCK_NOTE = {"html": "<p>Block minutes</p>"}
 
 
 @pytest.mark.parametrize("normalizer", [normalize_event, normalize_contribution, normalize_session])
-@pytest.mark.parametrize("note", [None, {}])
+@pytest.mark.parametrize("note", [None, {}, {"html": None, "url": None, "modified_dt": None}, {"user": 7}])
 def test_absent_or_empty_notes_are_omitted(normalizer, note):
     assert "note" not in normalizer({"id": "1", "note": note}, include_note=True)
     assert "note" not in normalizer({"id": "1"}, include_note=True)
@@ -53,7 +58,7 @@ def assert_no_notes(value):
 @pytest.mark.asyncio
 async def test_minutes_reach_detailed_tools_by_default(raw_event):
     details = await server.get_event_details(1)
-    assert details["note"] == EVENT_NOTE
+    assert details["note"] == NORMALIZED_EVENT_NOTE
     assert details["contributions"][0]["note"] == CONTRIBUTION_NOTE
     contributions = await server.get_event_contributions(1)
     assert contributions["items"][0]["note"] == CONTRIBUTION_NOTE
@@ -103,12 +108,24 @@ def test_normalizers_omit_notes_by_default_throughout_nested_results(raw_event):
     assert_no_notes(normalize_session(raw_event["sessions"][0]))
 
 
-def test_event_note_opt_in_preserves_export_fields():
-    assert normalize_event({"note": EVENT_NOTE}, include_note=True)["note"] == EVENT_NOTE
+def test_event_note_opt_in_normalizes_export_fields():
+    assert normalize_event({"note": EVENT_NOTE}, include_note=True)["note"] == NORMALIZED_EVENT_NOTE
     assert "note" not in normalize_event({"note": None}, include_note=True)
 
 
 @pytest.mark.parametrize("normalizer", [normalize_event, normalize_contribution, normalize_session])
-def test_note_opt_in_keeps_raw_passthrough(normalizer):
+def test_note_opt_in_normalizes_fields_without_mutating_export(normalizer):
     note = {**EVENT_NOTE, "extension": {"synthetic": True}}
-    assert normalizer({"note": note}, include_note=True)["note"] is note
+    assert normalizer({"note": note}, include_note=True)["note"] == NORMALIZED_EVENT_NOTE
+    assert note == {**EVENT_NOTE, "extension": {"synthetic": True}}
+
+
+@pytest.mark.parametrize("html", ["", " <div class='minutes'>A &amp; B<br>\n<table><tr><td>1</td></tr></table></div> "])
+def test_note_html_is_preserved_without_conversion(html):
+    assert normalize_note({"html": html, "url": None, "modified_dt": None}) == {"html": html}
+
+
+def test_note_with_only_metadata_omits_missing_content():
+    assert normalize_note({"url": EVENT_NOTE["url"], "modified_dt": EVENT_NOTE["modified_dt"]}) == {
+        "url": EVENT_NOTE["url"], "modified": EVENT_NOTE["modified_dt"],
+    }
