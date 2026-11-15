@@ -33,6 +33,18 @@
         "code",
         "doc"
       ]
+    },
+    {
+      "login": "gordonwatts",
+      "name": "Gordon Watts",
+      "avatar_url": "https://avatars.githubusercontent.com/u/1778366?v=4",
+      "profile": "http://gordonwatts.wordpress.com",
+      "contributions": [
+        "code",
+        "doc",
+        "test"
+      ]
     }
-  ]
+  ],
+  "commitType": "docs"
 }
