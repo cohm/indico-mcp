@@ -158,3 +158,117 @@ async def test_download_size_limit(client):
     respx.get(f"{BASE}/f").mock(return_value=httpx.Response(200, content=b"x" * 11))
     with pytest.raises(IndicoError, match="size limit"):
         await client.download(f"{BASE}/f", max_size=10)
+
+
+@respx.mock
+@pytest.mark.parametrize('base_path', ['', '/indico'])
+@pytest.mark.parametrize('scope', [
+    '', 'contributions/20/', 'contributions/20/subcontributions/30/', 'sessions/40/',
+])
+async def test_download_retries_protected_attachment(base_path, scope):
+    base = BASE + base_path
+    c = IndicoClient(InstanceConfig('test', base, 'secret'))
+    display = respx.get(f'{base}/event/1/{scope}attachments/2/3/talk.pdf').mock(
+        return_value=httpx.Response(403)
+    )
+    export = respx.get(f'{base}/export/event/1/material/2/3.bin').mock(
+        return_value=httpx.Response(200, content=b'%PDF', headers={'content-type': 'application/pdf'})
+    )
+    try:
+        result = await c.download(f'event/1/{scope}attachments/2/3/talk.pdf?download=1')
+        assert (result.content, result.filename, result.content_type, result.size) == (
+            b'%PDF', 'talk.pdf', 'application/pdf', 4,
+        )
+        assert display.call_count == export.call_count == 1
+        assert export.calls.last.request.headers['Authorization'] == 'Bearer secret'
+        assert not export.calls.last.request.url.query
+    finally:
+        await c.aclose()
+
+
+@respx.mock
+@pytest.mark.parametrize('path,status', [
+    ('/event/1/attachments/2/3/talk.pdf', 200),
+    ('/event/1/attachments/2/3/talk.pdf', 401),
+    ('/event/1/attachments/2/3/talk.pdf', 404),
+    ('/event/1/attachments/2/3/talk.pdf', 500),
+    ('/other/talk.pdf', 403),
+    ('/event/1/attachments/2/3/talk.pdf/extra', 403),
+    ('/event/1/attachments/2/3/', 403),
+    ('/indico/event/1/attachments/2/3/talk.pdf', 403),
+])
+async def test_download_does_not_retry_other_paths_or_statuses(client, path, status):
+    route = respx.get(BASE + path).mock(return_value=httpx.Response(status, content=b'x'))
+    if status == 200:
+        assert (await client.download(path)).content == b'x'
+    else:
+        with pytest.raises(IndicoError) as exc:
+            await client.download(path)
+        assert exc.value.status_code == status
+    assert route.call_count == len(respx.calls) == 1
+
+
+@respx.mock
+async def test_download_anonymous_denial_is_not_retried(anon_client):
+    respx.get(f'{BASE}/event/1/attachments/2/3/talk.pdf').mock(return_value=httpx.Response(403))
+    with pytest.raises(IndicoError) as exc:
+        await anon_client.download('/event/1/attachments/2/3/talk.pdf')
+    assert exc.value.status_code == 403
+    assert len(respx.calls) == 1
+
+
+@respx.mock
+async def test_download_retry_uses_request_auth_not_client_defaults(anon_client):
+    # Mirrors #9's per-request auth without introducing its transport API here.
+    async def add_auth(request):
+        if '/export/' not in request.url.path:
+            request.headers['Authorization'] = 'Bearer caller-token'
+    anon_client._http.event_hooks['request'].append(add_auth)
+    respx.get(f'{BASE}/event/1/attachments/2/3/talk.pdf').mock(return_value=httpx.Response(403))
+    export = respx.get(f'{BASE}/export/event/1/material/2/3.bin').mock(
+        return_value=httpx.Response(200, content=b'x')
+    )
+    await anon_client.download('/event/1/attachments/2/3/talk.pdf')
+    assert 'Authorization' not in anon_client._http.headers
+    assert export.calls.last.request.headers['Authorization'] == 'Bearer caller-token'
+
+
+@respx.mock
+@pytest.mark.parametrize('status', [400, 401, 403, 404, 500])
+async def test_download_export_error_is_preserved_without_further_retry(client, status):
+    respx.get(f'{BASE}/event/1/attachments/2/3/talk.pdf').mock(return_value=httpx.Response(403))
+    export = respx.get(f'{BASE}/export/event/1/material/2/3.bin').mock(return_value=httpx.Response(status))
+    with pytest.raises(IndicoError) as exc:
+        await client.download('/event/1/attachments/2/3/talk.pdf')
+    assert exc.value.status_code == status
+    assert export.call_count == 1
+    assert len(respx.calls) == 2
+
+
+@respx.mock
+@pytest.mark.parametrize('redirect_export', [False, True])
+async def test_download_retry_rejects_cross_host_redirect(client, redirect_export):
+    redirect = httpx.Response(302, headers={'location': 'https://evil.example/f'})
+    respx.get(f'{BASE}/event/1/attachments/2/3/talk.pdf').mock(
+        return_value=httpx.Response(403) if redirect_export else redirect
+    )
+    if redirect_export:
+        respx.get(f'{BASE}/export/event/1/material/2/3.bin').mock(return_value=redirect)
+    evil = respx.get('https://evil.example/f').mock(return_value=httpx.Response(403))
+    with pytest.raises(IndicoError, match='unexpected host'):
+        await client.download('/event/1/attachments/2/3/talk.pdf')
+    assert 'Authorization' not in evil.calls.last.request.headers
+    assert len(respx.calls) == (3 if redirect_export else 2)
+
+
+@respx.mock
+async def test_download_retry_keeps_size_limit_and_network_errors(client):
+    respx.get(f'{BASE}/event/1/attachments/2/3/talk.pdf').mock(return_value=httpx.Response(403))
+    export = respx.get(f'{BASE}/export/event/1/material/2/3.bin').mock(
+        return_value=httpx.Response(200, content=b'x' * 11)
+    )
+    with pytest.raises(IndicoError, match='size limit'):
+        await client.download('/event/1/attachments/2/3/talk.pdf', max_size=10)
+    export.mock(side_effect=httpx.ConnectError('boom'))
+    with pytest.raises(IndicoError, match='Network error downloading'):
+        await client.download('/event/1/attachments/2/3/talk.pdf')
