@@ -158,3 +158,34 @@ async def test_download_size_limit(client):
     respx.get(f"{BASE}/f").mock(return_value=httpx.Response(200, content=b"x" * 11))
     with pytest.raises(IndicoError, match="size limit"):
         await client.download(f"{BASE}/f", max_size=10)
+
+
+# --- OAuth errors from the export API ----------------------------------------
+
+def _oauth_error_page(error: str, description: str) -> httpx.Response:
+    # Indico's export API answers a token it refuses with HTTP 400 and its
+    # generic HTML error page, not 401 with JSON.
+    html = f"<html><body><p>OAuth error: {error}: {description}</p></body></html>"
+    return httpx.Response(400, text=html, headers={"content-type": "text/html; charset=utf-8"})
+
+
+@respx.mock
+async def test_export_reports_an_invalid_token(client):
+    respx.get(f"{BASE}/export/event/1.json").mock(return_value=_oauth_error_page(
+        "invalid_token",
+        "The access token provided is expired, revoked, malformed, or invalid for other reasons.",
+    ))
+    with pytest.raises(IndicoError, match="invalid_token") as exc:
+        await client.export("event/1")
+    assert exc.value.status_code == 400
+    assert "HTML instead of JSON" not in str(exc.value)
+
+
+@respx.mock
+async def test_export_names_the_missing_scope(client):
+    respx.get(f"{BASE}/export/event/1.json").mock(return_value=_oauth_error_page(
+        "insufficient_scope",
+        "The request requires higher privileges than provided by the access token.",
+    ))
+    with pytest.raises(IndicoError, match="read:legacy_api"):
+        await client.export("event/1")
