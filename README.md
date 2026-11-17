@@ -142,6 +142,57 @@ The `.env` file in the project directory is loaded automatically. Alternatively,
 }
 ```
 
+## Running as a shared HTTP server
+
+For a server that many users reach over the network (for example behind an MCP
+gateway), run the streamable-HTTP transport:
+
+```bash
+INDICO_BASE_URL=https://indico.cern.ch \
+  uv run indico-mcp --transport http --host 0.0.0.0 --port 8000
+```
+
+The MCP endpoint is `/mcp`, and `/healthz` answers `ok` without authentication.
+
+In this mode the server holds **no Indico token of its own**. Every request must
+carry the caller's own Indico token as `Authorization: Bearer <token>`: a
+personal token (`indp_…`) or an OAuth access token issued by that Indico
+instance. The server checks the token with `GET /api/user/` before any tool
+runs and uses it for every Indico call made on that request.
+
+- A missing, invalid, or revoked token gets **HTTP 401**, so the client knows
+  to re-authorise.
+- If Indico cannot be reached for the check, the answer is **HTTP 503**, not
+  401: an outage is not a bad token.
+- A successful check is cached for 60 s (`--auth-cache-ttl`); a failed one is
+  never cached.
+
+The token needs the `read:legacy_api` scope ("Classic API (read only)") for the
+export API, plus `read:user` or `read:everything` for the token check. Tools
+that call Indico's web endpoints (`search_categories`, `list_category_info`,
+`search_events_by_keyword`) also need `read:everything`.
+
+Tools that would write to the server's own disk are swapped out in HTTP mode:
+
+- `download_attachment` is replaced by `get_attachment_content`, which returns
+  the file inside the MCP response (up to 10 MB) instead of saving it on the
+  server. Attachment downloads are Indico web endpoints, so the token needs
+  `read:everything`.
+- `discover_rooms` is not offered, and the room tools never read a rooms cache
+  file, because one catalogue would be shared by every caller. They use the
+  configured `INDICO_ROOM_LOCATIONS` and live lookups instead.
+
+`--read-only` (either transport) hides `book_room`, the only tool that changes
+anything in Indico.
+
+HTTP mode serves exactly one Indico instance, because a token is only valid at
+the instance that issued it, and it refuses to start if `INDICO_TOKEN` is set,
+so a shared token can never be served to every caller. Run one server per
+instance.
+
+To run the end-to-end tests against a real instance, see
+`tests/test_e2e_indico.py`.
+
 ## Usage examples
 
 ```python
