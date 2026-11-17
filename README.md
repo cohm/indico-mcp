@@ -194,6 +194,11 @@ The server uses the [Indico HTTP Export API](https://docs.getindico.io/en/stable
 
 File attachments are discovered via the `folders` structure included in the export API response, which provides direct download URLs, filenames, content types, and sizes. Downloads are authenticated with the same Bearer token and saved locally (to a temp directory by default, or a specified path). Maximum file size is 100 MB.
 
+If a standard attachment display URL returns HTTP 403 with a Bearer token,
+the client retries once through the same instance's Classic API file export.
+This adds one request only on that denial path; the token still needs the
+Classic API scope and access to the attachment. Export denials remain errors.
+
 Built-in minutes are separate from file attachments. When present, a normalized `note` object is included in event details, contributions, and session blocks; its `html` field contains the formatted minutes. Use `get_event_details` for event minutes, `get_event_contributions` for contribution minutes, and `get_event_sessions` for session-block and nested contribution minutes. Category event listings omit event notes to keep results compact. Availability depends on what the instance exports and the caller can access.
 
 Notes contain `html` (unchanged export HTML), `url`, and `modified` (the export's

@@ -9,6 +9,7 @@ Authentication: Authorization: Bearer <token>
   - Create tokens at: <indico-url>/user/tokens/
 """
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -202,6 +203,31 @@ class IndicoClient:
 
         try:
             resp = await self._http.get(url)
+            # Display routes may require a browser session. The Classic API
+            # checks the attachment ACL against the bearer token instead.
+            # Use the actual request's auth, including per-request credentials.
+            authorization = resp.request.headers.get("Authorization", "")
+            if (
+                resp.status_code == 403
+                and authorization.startswith("Bearer ")
+                and resp.url.scheme == parsed.scheme
+                and resp.url.netloc.decode() == parsed.netloc
+            ):
+                base_path = urlparse(self._base_url).path.rstrip("/")
+                match = re.fullmatch(
+                    re.escape(base_path) + r"/event/(?P<event>[0-9]+)/"
+                    r"(?:(?:contributions/[0-9]+/(?:subcontributions/[0-9]+/)?|sessions/[0-9]+/))?"
+                    r"attachments/(?P<folder>[0-9]+)/(?P<attachment>[0-9]+)/[^/]+",
+                    parsed.path,
+                )
+                if match:
+                    export_url = (
+                        f"{self._base_url}/export/event/{match['event']}/material/"
+                        f"{match['folder']}/{match['attachment']}.bin"
+                    )
+                    resp = await self._http.get(
+                        export_url, headers={"Authorization": authorization}
+                    )
         except httpx.RequestError as exc:
             raise IndicoError(f"Network error downloading file: {exc}") from exc
 
