@@ -158,3 +158,48 @@ async def test_download_size_limit(client):
     respx.get(f"{BASE}/f").mock(return_value=httpx.Response(200, content=b"x" * 11))
     with pytest.raises(IndicoError, match="size limit"):
         await client.download(f"{BASE}/f", max_size=10)
+
+
+# --- per-request token ----------------------------------------------------
+
+@respx.mock
+async def test_token_provider_is_consulted_on_every_request():
+    tokens = iter(["alice", "bob"])
+    c = IndicoClient(InstanceConfig(name="default", base_url=BASE, token=None),
+                     token_provider=lambda: next(tokens))
+    route = respx.get(f"{BASE}/export/event/1.json").mock(
+        return_value=httpx.Response(200, json={})
+    )
+    await c.export("event/1")
+    await c.export("event/1")
+    await c.aclose()
+    assert [call.request.headers["Authorization"] for call in route.calls] == [
+        "Bearer alice", "Bearer bob",
+    ]
+
+
+@respx.mock
+@pytest.mark.parametrize("method,path,url", [
+    ("api", "categories/1/", f"{BASE}/api/categories/1/"),
+    ("get", "category/search", f"{BASE}/category/search"),
+    ("download", f"{BASE}/event/1/attachments/2/3/f.pdf", f"{BASE}/event/1/attachments/2/3/f.pdf"),
+])
+async def test_token_provider_applies_to_every_request_kind(method, path, url):
+    c = IndicoClient(InstanceConfig(name="default", base_url=BASE, token=None),
+                     token_provider=lambda: "carol")
+    route = respx.get(url).mock(return_value=httpx.Response(200, json={}))
+    await getattr(c, method)(path)
+    await c.aclose()
+    assert route.calls.last.request.headers["Authorization"] == "Bearer carol"
+
+
+@respx.mock
+async def test_token_provider_applies_to_post_form():
+    c = IndicoClient(InstanceConfig(name="default", base_url=BASE, token=None),
+                     token_provider=lambda: "dave")
+    route = respx.post(f"{BASE}/api/roomBooking/bookRoom.json").mock(
+        return_value=httpx.Response(200, json={})
+    )
+    await c.post_form("roomBooking/bookRoom.json", a=1)
+    await c.aclose()
+    assert route.calls.last.request.headers["Authorization"] == "Bearer dave"
